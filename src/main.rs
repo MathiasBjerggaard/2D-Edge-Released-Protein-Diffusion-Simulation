@@ -3,9 +3,10 @@ use std::fs::OpenOptions;
 use std::io::{BufWriter, Write};
 use std::fs::File;
 use rand_distr::Distribution;
-const BINDINGCHANCE: f64 = 0.5;
+const BINDINGCHANCE: f64 = 0.05;
 //const RSQRD: f64 = 0.05;
 const RSQRD: f64 = 0.0025; // 0.05^2
+const RUNS: usize = 50000;
 
 fn main() -> Result<(), Box<dyn std::error::Error>>{
     //Ready the writing part of the code.
@@ -23,18 +24,22 @@ fn main() -> Result<(), Box<dyn std::error::Error>>{
     let mut writer2 = BufWriter::new(file2);  
 
 
-    let mut boundpercent:Vec<i32> = vec![0;50000];
+    let mut boundpercent:Vec<i32> = vec![0;RUNS];
     let number:usize = 1000;
     let mut boundto = vec![-1;number];
     let mut done:usize = 0;
-    let dna = placedna(1);
+    let dna = placedna(10);
     let mut particles = Placeparticles(number, &mut dna.clone());
+    let mut old_particles = particles.clone();
     let mut status:Vec<u32> = vec![0;number];
-    for i in 0..50000{
+    for i in 0..RUNS{
         //Save(&dna,&particles,&mut writer,i);
+        old_particles = particles.clone();
         particles = moveparticles(particles, &mut status, number);
         status = detectcollision(&particles, status, number, done, &dna, &mut boundto);
+        particles = placeback(particles, status.clone(), number, &old_particles);
         boundpercent[i] = boundpercentfunction(&status, &number);
+        status = resetstatus(status.clone(), number.clone());
         if i%100 == 0{
             println!("{}",i);
             println!("{}/{}",boundpercent[i],number);
@@ -44,6 +49,33 @@ fn main() -> Result<(), Box<dyn std::error::Error>>{
     saveboundto(&mut boundto, &mut writer)?;
     Ok(())
 }
+
+fn resetstatus(mut status: Vec<u32>, number: usize) -> Vec<u32>{
+    let mut newstatus:Vec<u32> = vec![0;number];
+    for i in 0..number{
+        if status[i] == 999999{
+            newstatus[i] = 0;
+        }
+        else{
+            newstatus[i] = status[i].clone();
+        }
+    }
+    newstatus
+}
+
+fn placeback(mut particles: Vec<Vec<f64>>,
+    status: Vec<u32>,
+    number: usize,
+    old_particles: &Vec<Vec<f64>>) -> Vec<Vec<f64>>{
+    for i in 0..number{
+        if status[i] == 999999{
+            particles[i] = old_particles[i].clone();
+        }
+    }
+    particles
+}
+
+
 
 fn placenewdna(dna: &mut Vec<Vec<f64>>, i:usize)->(Vec<f64>){
     let mut rng = rand::thread_rng();
@@ -88,7 +120,7 @@ fn Placeparticles(number:usize, dna: &mut Vec<Vec<f64>>)->Vec<Vec<f64>>{
     let mut rng = rand::thread_rng();
     let centerx = 0.5;
     let centery = 0.5;
-    let radius = 0.07;
+    let radius = 0.05;
 
 
     for i in 0..number{
@@ -108,9 +140,9 @@ fn Placeparticles(number:usize, dna: &mut Vec<Vec<f64>>)->Vec<Vec<f64>>{
 fn moveparticles(mut particles:Vec<Vec<f64>>, status:&mut Vec<u32>, number:usize)->Vec<Vec<f64>>{
     let mut rng = rand::thread_rng();
     for i in 0..number{
-        if status[i] == 0 {
-            particles[i][0] += rng.sample::<f64, _>(rand_distr::StandardNormal) / 100.0;
-            particles[i][1] += rng.sample::<f64, _>(rand_distr::StandardNormal) / 100.0;
+        if status[i] == 0 || status[i] == 999999{
+            particles[i][0] += rng.sample::<f64, _>(rand_distr::StandardNormal) / 1000.0;
+            particles[i][1] += rng.sample::<f64, _>(rand_distr::StandardNormal) / 1000.0;
         if particles[i][0] > 1.0{
             particles[i][0] = 1.0;
         }
@@ -134,7 +166,7 @@ fn detectcollision(particles:&Vec<Vec<f64>>, mut status:Vec<u32>, _number:usize,
     let mut distsqrd:f64;
     
     for (particle_index, particle) in particles.iter().enumerate() {
-        if status[particle_index] != 0 {
+        if status[particle_index] != 0 && status[particle_index] != 999999 {
             continue; // Skip already bound particles
         }
         
@@ -159,6 +191,10 @@ fn detectcollision(particles:&Vec<Vec<f64>>, mut status:Vec<u32>, _number:usize,
             if random_number < BINDINGCHANCE { //Tal skal balanceres efter k_on
                 status[particle_index] = closest_strand as u32 + 1; // Add 1 so 0 means unbound
                 boundto[particle_index] = closest_strand as i32;
+                //println!("BOUND! rand {}",random_number)
+            }
+            else{
+                status[particle_index] = 999999
             }
         }
     }
@@ -168,7 +204,7 @@ fn detectcollision(particles:&Vec<Vec<f64>>, mut status:Vec<u32>, _number:usize,
 fn boundpercentfunction(status:&Vec<u32>, number:&usize)->i32{
     let mut amount:i32 = 0;
     for element in status{
-        if *element != 0{
+        if *element != 0 && *element != 999999{
             amount+=1;
         }
     }
@@ -210,8 +246,9 @@ fn Save(dna:&Vec<Vec<f64>>,particles:&Vec<Vec<f64>>, writer: &mut BufWriter<File
 }
 fn saveboundpercent(boundpercent:Vec<i32>, writer2: &mut BufWriter<File>)-> Result<(), Box<dyn std::error::Error>>{
     for i in 0..boundpercent.len(){
-        writeln!(writer2, "{}",boundpercent[i])?;
+        write!(writer2, "{},",boundpercent[i])?;
     }
+    writeln!(writer2,"")?;
     writer2.flush()?;
     Ok(())
 
@@ -219,8 +256,9 @@ fn saveboundpercent(boundpercent:Vec<i32>, writer2: &mut BufWriter<File>)-> Resu
 
 fn saveboundto(boundto:&mut Vec<i32>, writer: &mut BufWriter<File>)-> Result<(), Box<dyn std::error::Error>>{
     for i in 0..boundto.len(){
-        writeln!(writer, "{}",boundto[i])?;
+        write!(writer, "{},",boundto[i])?;
     }
+    writeln!(writer, "")?;
     writer.flush()?;
     Ok(())
 }
@@ -291,7 +329,7 @@ mod tests {
         let done = 0;
         let dna = vec![vec![0.5, 0.5], vec![0.2, 0.2]];
         let mut updated_status = detectcollision(&particles, status.clone(), number, done, &dna, &mut vec![-1; number]);
-        for _ in 0..100{
+        for _ in 0..1000000{
             updated_status = detectcollision(&particles, status.clone(), number, done, &dna, &mut vec![-1; number]);
         }
         // Check that particles bind to the closest DNA strand
@@ -309,4 +347,16 @@ mod tests {
         println!("restult = {}", output_str);
         assert_eq!(output_str, "3 / 5");
     }
+    #[test]
+    fn test_placeback() {
+    let mut particles = vec![vec![0.1, 0.1], vec![0.2, 0.2]];
+    let old_particles = vec![vec![0.5, 0.5], vec![0.6, 0.6]];
+    let mut status = vec![0, 999999];
+    let number = 2;
+
+    let result = placeback(particles, status, number, &old_particles);
+
+    assert_eq!(result[0], vec![0.1, 0.1]); // unchanged
+    assert_eq!(result[1], vec![0.6, 0.6]); // reverted
+}
 }
